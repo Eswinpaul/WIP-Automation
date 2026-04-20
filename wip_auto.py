@@ -348,7 +348,7 @@ def save_wip(df, path=None):
     return out
 
 
-def wip_download_button():
+def wip_download_button(key="wip_dl"):
     """Show a download button for the last saved WIP file."""
     if 'wip_download_bytes' in st.session_state:
         st.download_button(
@@ -357,6 +357,7 @@ def wip_download_button():
             file_name="WIP.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
+            key=key,
         )
 
 # ─────────────────────────────────────────────
@@ -550,7 +551,7 @@ with st.sidebar:
 
     # Sidebar footer
     st.markdown("---")
-    wip_download_button()
+    wip_download_button("dl_sidebar")
     st.markdown(
         '<div style="text-align:center;font-size:0.7rem;opacity:0.45;padding-bottom:1rem;">'
         f'💾 Saving to {WIP_FILE}</div>',
@@ -1230,7 +1231,7 @@ elif page == "📊 Cost Analysis":
                 "WIP saved to " + WIP_FILE +
                 " successfully (overhead jobs 25000 and 26000 excluded)."
             )
-            wip_download_button()
+            wip_download_button("dl_cost_analysis")
         except PermissionError:
             st.error("Close WIP.xlsx before saving.")
         except Exception as e:
@@ -1563,7 +1564,7 @@ elif page == "📈 Projected Cost":
                 f"Projections saved to {WIP_FILE} — "
                 f"all calculated columns added for non-overhead jobs."
             )
-            wip_download_button()
+            wip_download_button("dl_projected")
         except PermissionError:
             st.error("Close WIP.xlsx before saving.")
         except Exception as e:
