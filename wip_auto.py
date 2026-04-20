@@ -319,7 +319,9 @@ def save_wip(df, path=None):
     - Renames internal column names to match the WIP template.
     - Adds any missing WIP columns as 0.
     - Reorders to WIP_TARGET_COLS, then appends any extra columns at the end.
+    - Stores Excel bytes in session state for download.
     """
+    from io import BytesIO
     if path is None:
         path = WIP_FILE
     out = df.copy()
@@ -337,7 +339,25 @@ def save_wip(df, path=None):
     out = out[WIP_TARGET_COLS + extra_cols]
 
     out.to_excel(path, index=False)
+
+    # Store bytes for download
+    buf = BytesIO()
+    out.to_excel(buf, index=False)
+    st.session_state['wip_download_bytes'] = buf.getvalue()
+
     return out
+
+
+def wip_download_button():
+    """Show a download button for the last saved WIP file."""
+    if 'wip_download_bytes' in st.session_state:
+        st.download_button(
+            label="📥  Download WIP.xlsx",
+            data=st.session_state['wip_download_bytes'],
+            file_name="WIP.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
 # ─────────────────────────────────────────────
 # SHARED PIPELINE FUNCTION (used by Cost Analysis + Projected Cost)
@@ -530,6 +550,7 @@ with st.sidebar:
 
     # Sidebar footer
     st.markdown("---")
+    wip_download_button()
     st.markdown(
         '<div style="text-align:center;font-size:0.7rem;opacity:0.45;padding-bottom:1rem;">'
         f'💾 Saving to {WIP_FILE}</div>',
@@ -1209,6 +1230,7 @@ elif page == "📊 Cost Analysis":
                 "WIP saved to " + WIP_FILE +
                 " successfully (overhead jobs 25000 and 26000 excluded)."
             )
+            wip_download_button()
         except PermissionError:
             st.error("Close WIP.xlsx before saving.")
         except Exception as e:
@@ -1541,6 +1563,7 @@ elif page == "📈 Projected Cost":
                 f"Projections saved to {WIP_FILE} — "
                 f"all calculated columns added for non-overhead jobs."
             )
+            wip_download_button()
         except PermissionError:
             st.error("Close WIP.xlsx before saving.")
         except Exception as e:
