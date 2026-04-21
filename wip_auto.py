@@ -181,8 +181,69 @@ COL_RENAME_TO_WIP = {
     'Budgeted Gross Profit' : 'Budgeted Gross Proft ',
 }
 
+# ─────────────────────────────────────────────
+# COLUMN FORMAT CLASSIFICATION
+# ─────────────────────────────────────────────
+# Accounting format:  $#,##0.00  with negatives as  ($#,##0.00)
+ACCT_FMT = '_($* #,##0.00_);_($* (#,##0.00);_($* "-"??_);_(@_)'
+
+# Percentage format:  0.0%
+PCT_FMT = '0.0%'
+
+# Text columns get no special number format (General)
+TEXT_COLS = {
+    'Status', 'Job #', 'Job Name', 'Client Name',
+    'Write Up / Write Down Potential ', 'Notes',
+}
+
+CURRENCY_COLS = {
+    'As Sold Contract Amount',
+    'Approved Change Orders',
+    "CO's Added during WIP",
+    'Current Contract Amount',
+    'JTD Billings',
+    'Retaininage',
+    'Net Billing',
+    '(Over) / Under Billings',
+    'Total Remaning Billing',
+    'Total Cost Projection (As of report date)',
+    'Remaining Cost to Complete Projection (c)',
+    'JTD Costs (B)',
+    'Write Up / Write Down Amount',
+    'Budgeted Gross Proft ',
+    'Projected Gross Profit',
+    'GP Variance (USD)',
+    'JTD Revenue',
+    'Unearned Rev',
+    'Remaining Profit Margin',
+    'JTD Cost',
+    'JTD Profits',
+    'YTD Revenue',
+    'YTD Cost',
+    'YTD Profit',
+    'MTD Revenue',
+    'MTD Cost',
+    'MTD Profit',
+    'YTD Cost.1',
+    'YTD Revenue.1',
+}
+
+PERCENT_COLS = {
+    'Retainage %',
+    'Over / (Under) Billings %',
+    'Billings %',
+    '% Complete',
+    'Marin %\nwriteup/wiritedown',
+    'Projected Margin %',
+    'GP Variance(%)',
+}
+
+
 def save_wip(df, path=None):
     from io import BytesIO
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font, Alignment, numbers
+
     if path is None:
         path = WIP_FILE
     out = df.copy()
@@ -192,9 +253,48 @@ def save_wip(df, path=None):
             out[col] = 0.0
     extra_cols = [c for c in out.columns if c not in WIP_TARGET_COLS]
     out = out[WIP_TARGET_COLS + extra_cols]
+
+    # --- Write raw data via pandas first ---
     out.to_excel(path, index=False)
+
+    # --- Apply accounting formats via openpyxl ---
+    wb = load_workbook(path)
+    ws = wb.active
+
+    # Build column-index → format map (1-indexed)
+    col_names = [str(c.value) for c in ws[1]]
+    for col_idx, col_name in enumerate(col_names, start=1):
+        if col_name in CURRENCY_COLS:
+            fmt = ACCT_FMT
+        elif col_name in PERCENT_COLS:
+            fmt = PCT_FMT
+        else:
+            continue
+        # Apply to every data row (skip header row 1)
+        for row_idx in range(2, ws.max_row + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            cell.number_format = fmt
+
+    # Auto-fit column widths (rough heuristic)
+    for col_idx, col_name in enumerate(col_names, start=1):
+        col_letter = ws.cell(row=1, column=col_idx).column_letter
+        max_len = len(str(col_name)) + 2
+        if col_name in CURRENCY_COLS:
+            max_len = max(max_len, 18)
+        elif col_name in PERCENT_COLS:
+            max_len = max(max_len, 10)
+        ws.column_dimensions[col_letter].width = min(max_len, 28)
+
+    # Bold header row
+    header_font = Font(bold=True)
+    for cell in ws[1]:
+        cell.font = header_font
+
+    wb.save(path)
+
+    # Also create download bytes with the same formatting
     buf = BytesIO()
-    out.to_excel(buf, index=False)
+    wb.save(buf)
     st.session_state['wip_download_bytes'] = buf.getvalue()
     return out
 
@@ -323,7 +423,7 @@ if 'master_wip' not in st.session_state:
     for col in ALL_COLS:
         if col not in df_load.columns:
             df_load[col] = 0.0 if any(x in col for x in ['Amount', 'Orders', '%', 'Billings', 'Retainage', 'Net']) else ""
-    st.session_state.master_wip = df_load[ALL_COLS]
+    st.session_state.master_wip = df_load[ALL_COLS].copy()
 
 if 'Paula Biiling' in st.session_state.master_wip.columns:
     st.session_state.master_wip.rename(columns={'Paula Biiling': 'Paula Billings'}, inplace=True)
@@ -758,7 +858,7 @@ elif page == "📊 Cost Analysis":
 
 
 # ─────────────────────────────────────────────
-# PAGE 5: PROJECTED COST
+# PAGE 5: PROJECTED COST  (streamlined layout)
 # ─────────────────────────────────────────────
 elif page == "📈 Projected Cost":
     page_header("📈", "Projected Cost")
@@ -791,7 +891,6 @@ elif page == "📈 Projected Cost":
         st.stop()
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    st.markdown('<p style="font-weight:700;color:#1e293b;font-size:1.05rem;margin-bottom:0.5rem;">🧮 Remaining Cost to Complete Projection</p>', unsafe_allow_html=True)
 
     remaining_col            = 'Remaining Cost to Complete Projection (c)'
     total_cost_proj_col      = 'Total Cost Projection (As of report date)'
@@ -814,7 +913,6 @@ elif page == "📈 Projected Cost":
     proj_display['Delta (Current - Prior JTD)'] = proj_display['Current Month JTD'] - proj_display['Previous Month JTD']
     proj_display[remaining_col]                  = proj_display['Previous Remaining (c)'] - proj_display['Delta (Current - Prior JTD)']
 
-    # ── Core numeric vectors ──
     jtd_cost = pd.to_numeric(proj_display['Current Month JTD'],       errors='coerce').fillna(0)
     remain_c = pd.to_numeric(proj_display[remaining_col],             errors='coerce').fillna(0)
     contract = pd.to_numeric(proj_display['Current Contract Amount'], errors='coerce').fillna(0)
@@ -825,7 +923,6 @@ elif page == "📈 Projected Cost":
     )
     jtd_bill = pd.to_numeric(proj_display['JTD Billings'], errors='coerce').fillna(0)
 
-    # Pull Adjusted JTD & Budget for % Complete
     adj_jtd_map = st.session_state['jva_job_jtd'].set_index('job_no')['jtd_total_cost'].to_dict()
     proj_display['Adjusted JTD Cost'] = proj_display['Job #'].map(lambda j: adj_jtd_map.get(str(j).strip(), 0)).fillna(0)
 
@@ -843,102 +940,109 @@ elif page == "📈 Projected Cost":
     pct_complete = (adj_jtd / contract.where(contract != 0, other=1)).where(contract != 0, other=0)
     proj_display['% Complete'] = pct_complete
 
-    # 1. Total Cost Projection = JTD Cost + Remaining (c)
-    proj_display[total_cost_proj_col] = jtd_cost + remain_c
-
-    # 2. Total Remaining Billing = Current Contract Amount - JTD Billings
+    proj_display[total_cost_proj_col]      = jtd_cost + remain_c
     proj_display[total_remaining_bill_col] = contract - jtd_bill
-
-    # 3. Billings % = JTD Billings / Current Contract Amount
-    proj_display[billings_pct_col] = (jtd_bill / contract.where(contract != 0, other=1)).where(contract != 0, other=0)
-
-    # 4. JTD Revenue = Current Contract Amount x % Complete
-    proj_display[jtd_revenue_col] = contract * pct_complete
-
-    # 5. (Over) / Under Billings = (Current Contract x % Complete) - JTD Billings
+    proj_display[billings_pct_col]         = (jtd_bill / contract.where(contract != 0, other=1)).where(contract != 0, other=0)
+    proj_display[jtd_revenue_col]          = contract * pct_complete
     proj_display['(Over) / Under Billings'] = (contract * pct_complete) - jtd_bill
-
-    # 6. Over / (Under) Billings %
     over_under = pd.to_numeric(proj_display['(Over) / Under Billings'], errors='coerce').fillna(0)
     proj_display['Over / (Under) Billings %'] = (over_under / contract.where(contract != 0, other=1)).where(contract != 0, other=0)
-
-    # 7. Retainage & Net Billing
     ret_pct = pd.to_numeric(proj_display['Retainage %'], errors='coerce').fillna(0)
-    proj_display['Retainage']   = ret_pct * jtd_bill
+    proj_display['Retainage']    = ret_pct * jtd_bill
     proj_display['Net Billings'] = jtd_bill - proj_display['Retainage']
 
-    # ─────────────────────────────────────────────
-    # NEW GP & UNEARNED REV CALCULATIONS
-    # ─────────────────────────────────────────────
+    budgeted_margin = (1 - budget / contract.where(contract != 0, other=1)).where(contract != 0, other=0)
+    proj_display['Budgeted Job Margin %']  = budgeted_margin
+    proj_display['Budgeted Gross Profit']  = budgeted_margin * contract
 
-    # 8. Budgeted Job Margin % = 1 - Total Budgeted Cost (a) / Current Contract Amount
-    proj_display['Budgeted Job Margin %'] = (
-        1 - budget / contract.where(contract != 0, other=1)
-    ).where(contract != 0, other=0)
-
-    # 9. Budgeted Gross Profit = Budgeted Job Margin % x Current Contract Amount
-    budgeted_margin = pd.to_numeric(proj_display['Budgeted Job Margin %'], errors='coerce').fillna(0)
-    proj_display['Budgeted Gross Profit'] = budgeted_margin * contract
-
-    # 10. Projected Gross Margin % = 1 - Total Cost Projection / Current Contract Amount
     total_cost_proj_vals = pd.to_numeric(proj_display[total_cost_proj_col], errors='coerce').fillna(0)
-    proj_display['Projected Gross Margin %'] = (
-        1 - total_cost_proj_vals / contract.where(contract != 0, other=1)
-    ).where(contract != 0, other=0)
+    projected_margin = (1 - total_cost_proj_vals / contract.where(contract != 0, other=1)).where(contract != 0, other=0)
+    proj_display['Projected Gross Margin %'] = projected_margin
+    proj_display['Projected Gross Profit']   = projected_margin * contract
 
-    # 11. Projected Gross Profit = Projected Gross Margin % x Current Contract Amount
-    projected_margin = pd.to_numeric(proj_display['Projected Gross Margin %'], errors='coerce').fillna(0)
-    proj_display['Projected Gross Profit'] = projected_margin * contract
-
-    # 12. GP Variance % = Budgeted Job Margin % - Projected Gross Margin %
-    proj_display['GP Variance(%)'] = budgeted_margin - projected_margin
-
-    # 13. GP Variance (USD) = Projected Gross Profit - Budgeted Gross Profit
+    proj_display['GP Variance(%)']   = budgeted_margin - projected_margin
     proj_display['GP Variance (USD)'] = (
         pd.to_numeric(proj_display['Projected Gross Profit'], errors='coerce').fillna(0) -
         pd.to_numeric(proj_display['Budgeted Gross Profit'],  errors='coerce').fillna(0)
     )
+    proj_display['Unearned Rev'] = contract - pd.to_numeric(proj_display[jtd_revenue_col], errors='coerce').fillna(0)
 
-    # 14. Unearned Rev = Current Contract Amount - JTD Revenue
-    proj_display['Unearned Rev'] = (
-        contract - pd.to_numeric(proj_display[jtd_revenue_col], errors='coerce').fillna(0)
-    )
+    # ── Streamlined per-job KPI view ──
+    st.markdown('<p style="font-weight:700;color:#1e293b;font-size:1.05rem;margin-bottom:0.5rem;">🔍 Job Projection Detail</p>', unsafe_allow_html=True)
+    job_options       = sorted(proj_display['Job #'].unique())
+    selected_proj_job = st.selectbox("Select Job # to inspect", job_options, key="proj_job_select")
+    prow              = proj_display[proj_display['Job #'] == selected_proj_job].iloc[0]
 
-    # ── Per-job detail selector ──
-    job_options      = sorted(proj_display['Job #'].unique())
-    selected_proj_job= st.selectbox("Select Job # to inspect", job_options, key="proj_job_select")
-    prow             = proj_display[proj_display['Job #'] == selected_proj_job].iloc[0]
+    # ── Compact KPI table instead of 6 rows of metric cards ──
+    def fmt_acct(v):
+        """Format a value as accounting: $1,234.56 or ($1,234.56)"""
+        val = float(v) if pd.notnull(v) else 0.0
+        if val < 0:
+            return f'<span style="color:#D10D38;">(${abs(val):,.2f})</span>'
+        return f'${val:,.2f}'
 
-    metric_cards([
-        ("Current Month JTD",           f"${float(prow['Current Month JTD']):,.2f}",          "navy"),
-        ("Previous Month JTD",          f"${float(prow['Previous Month JTD']):,.2f}",         ""),
-        ("Delta",                       f"${float(prow['Delta (Current - Prior JTD)']):,.2f}","red"),
-    ])
-    metric_cards([
-        ("Prev. Remaining (c)",         f"${float(prow['Previous Remaining (c)']):,.2f}",     ""),
-        ("Remaining Cost (c)",          f"${float(prow[remaining_col]):,.2f}",                "green"),
-        ("Total Cost Projection",       f"${float(prow[total_cost_proj_col]):,.2f}",          "navy"),
-    ])
-    metric_cards([
-        ("JTD Billings",                f"${float(prow['JTD Billings']):,.2f}",               "navy"),
-        ("Total Remaining Billing",     f"${float(prow[total_remaining_bill_col]):,.2f}",     ""),
-        ("Billings %",                  f"{float(prow[billings_pct_col])*100:.1f}%",          ""),
-    ])
-    metric_cards([
-        ("% Complete",                  f"{float(prow['% Complete'])*100:.1f}%",              "navy"),
-        ("JTD Revenue",                 f"${float(prow[jtd_revenue_col]):,.2f}",              "green"),
-        ("Unearned Rev",                f"${float(prow['Unearned Rev']):,.2f}",               ""),
-    ])
-    metric_cards([
-        ("Budgeted Gross Profit",       f"${float(prow['Budgeted Gross Profit']):,.2f}",      "navy"),
-        ("Projected Gross Profit",      f"${float(prow['Projected Gross Profit']):,.2f}",     "green"),
-        ("GP Variance (USD)",           f"${float(prow['GP Variance (USD)']):,.2f}",          "red"),
-    ])
-    metric_cards([
-        ("Budgeted Job Margin %",       f"{float(prow['Budgeted Job Margin %'])*100:.1f}%",   "navy"),
-        ("Projected Gross Margin %",    f"{float(prow['Projected Gross Margin %'])*100:.1f}%",""),
-        ("GP Variance %",               f"{float(prow['GP Variance(%)'])*100:.1f}%",          "red"),
-    ])
+    def fmt_pct(v):
+        """Format a value as percentage: 12.3%"""
+        val = float(v) if pd.notnull(v) else 0.0
+        if val < 0:
+            return f'<span style="color:#D10D38;">({abs(val)*100:.1f}%)</span>'
+        return f'{val*100:.1f}%'
+
+    # Build structured KPI sections
+    kpi_sections = [
+        {
+            "title": "Cost Projection",
+            "rows": [
+                ("Current Contract Amount",    fmt_acct(prow['Current Contract Amount'])),
+                ("JTD Cost (Current Period)",   fmt_acct(prow['Current Month JTD'])),
+                ("Remaining Cost (c)",          fmt_acct(prow[remaining_col])),
+                ("Total Cost Projection",       fmt_acct(prow[total_cost_proj_col])),
+                ("% Complete",                  fmt_pct(prow['% Complete'])),
+            ],
+        },
+        {
+            "title": "Billing & Revenue",
+            "rows": [
+                ("JTD Billings",                fmt_acct(prow['JTD Billings'])),
+                ("Total Remaining Billing",     fmt_acct(prow[total_remaining_bill_col])),
+                ("Billings %",                  fmt_pct(prow[billings_pct_col])),
+                ("JTD Revenue",                 fmt_acct(prow[jtd_revenue_col])),
+                ("Unearned Revenue",            fmt_acct(prow['Unearned Rev'])),
+                ("(Over) / Under Billings",     fmt_acct(prow['(Over) / Under Billings'])),
+            ],
+        },
+        {
+            "title": "Gross Profit Analysis",
+            "rows": [
+                ("Budgeted Gross Profit",       fmt_acct(prow['Budgeted Gross Profit'])),
+                ("Projected Gross Profit",      fmt_acct(prow['Projected Gross Profit'])),
+                ("GP Variance (USD)",           fmt_acct(prow['GP Variance (USD)'])),
+                ("Budgeted Job Margin %",       fmt_pct(prow['Budgeted Job Margin %'])),
+                ("Projected Gross Margin %",    fmt_pct(prow['Projected Gross Margin %'])),
+                ("GP Variance %",               fmt_pct(prow['GP Variance(%)'])),
+            ],
+        },
+    ]
+
+    # Render as three side-by-side tables
+    cols = st.columns(3)
+    for i, section in enumerate(kpi_sections):
+        with cols[i]:
+            tbl_rows = ""
+            for label, value in section["rows"]:
+                tbl_rows += (
+                    f'<tr>'
+                    f'<td style="padding:0.45rem 0.6rem;font-size:0.82rem;color:#475569;border-bottom:1px solid #f1f5f9;">{label}</td>'
+                    f'<td style="padding:0.45rem 0.6rem;font-size:0.88rem;font-weight:600;color:#1e293b;text-align:right;border-bottom:1px solid #f1f5f9;font-family:Montserrat,sans-serif;">{value}</td>'
+                    f'</tr>'
+                )
+            st.markdown(
+                f'<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">'
+                f'<div style="background:linear-gradient(135deg,#153275,#1a3f8f);color:#fff;padding:0.6rem 0.8rem;font-family:Montserrat,sans-serif;font-weight:700;font-size:0.82rem;text-transform:uppercase;letter-spacing:0.05em;">{section["title"]}</div>'
+                f'<table style="width:100%;border-collapse:collapse;">{tbl_rows}</table>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     st.markdown("##### Projection — All Jobs")
